@@ -1,134 +1,57 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Barcode → Price Lookup</title>
-
-  <!-- html5-qrcode library -->
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"></script>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Barcode Price Lookup</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <style>
-    body { font-family: system-ui, Arial; margin: 0; padding: 16px; text-align:center; }
-    #reader { margin: 0 auto; max-width:480px; width:100%; }
-    #result { font-size: 20px; margin-top: 12px; min-height: 26px; }
-    #controls { margin-top: 10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
-    button, input { padding: 8px 12px; font-size: 15px; border-radius:8px; border:1px solid #ccc; }
-    .price { font-weight:700; }
-    .found { color: #0b7; }
-    .notfound { color: #d33; }
+    body { font-family: Arial, sans-serif; padding: 10px; text-align: center; }
+    #reader { width: 300px; margin: auto; }
+    #result { font-size: 1.2em; margin-top: 20px; }
   </style>
 </head>
 <body>
-
-  <h2>Barcode → Price Lookup</h2>
+  <h1>Scan Barcode</h1>
   <div id="reader"></div>
-  <div id="result">Loading price list...</div>
+  <div id="result">Waiting for scan...</div>
 
-  <div id="controls">
-    <input id="manual" placeholder="Type barcode">
-    <button id="check-manual">Check</button>
-    <button id="reload-data">Reload Data</button>
-  </div>
+  <script>
+    const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQUu9FNJaZ7OvnW2hEQhQ_X_Vw7MIa7qDUX5MXcpKnKBkOFkc5oDBE-3e-FrznFGT_BUhWeyJ6cnHMh/pub?gid=0&single=true&output=csv"; // publish to web -> CSV link
 
-  <audio id="beep" src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA="></audio>
+    let priceMap = {};
 
-<script>
-(async function(){
-  // 🔹 Replace with your Google Sheet published CSV URL:
-  const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQUu9FNJaZ7OvnW2hEQhQ_X_Vw7MIa7qDUX5MXcpKnKBkOFkc5oDBE-3e-FrznFGT_BUhWeyJ6cnHMh/pub?gid=0&single=true&output=csv";
+    // Load CSV into priceMap
+    fetch(csvUrl)
+      .then(res => res.text())
+      .then(text => {
+        let rows = text.split("\n").map(r => r.trim()).filter(r => r);
+        rows.forEach(row => {
+          let [barcode, price] = row.split(",");
+          priceMap[barcode] = price;
+        });
+      });
 
-  const resultEl = document.getElementById('result');
-  const manualInput = document.getElementById('manual');
-  const checkManualBtn = document.getElementById('check-manual');
-  const reloadBtn = document.getElementById('reload-data');
-  const beep = document.getElementById('beep');
-
-  let priceMap = new Map();
-  let lastScanned = null;
-
-  function show(msg, status) {
-    resultEl.className = '';
-    if (status === 'ok') resultEl.classList.add('found');
-    else if (status === 'not') resultEl.classList.add('notfound');
-    resultEl.innerHTML = msg;
-  }
-
-  async function loadCSV(url) {
-    show('Loading price list...');
-    try {
-      const res = await fetch(url, { cache: 'no-store' });
-      const txt = await res.text();
-      parseCSV(txt);
-      show(`Loaded ${priceMap.size} products. Start scanning!`);
-    } catch (e) {
-      show('Error loading CSV: ' + e, 'not');
+    function onScanSuccess(decodedText) {
+      if (priceMap[decodedText]) {
+        document.getElementById("result").innerText = 
+          `Price: ₹${priceMap[decodedText]}`;
+      } else {
+        document.getElementById("result").innerText = 
+          `Barcode ${decodedText} not found`;
+      }
     }
-  }
 
-  function parseCSV(text) {
-    priceMap.clear();
-    const lines = text.split(/\r?\n/);
-    for (let line of lines) {
-      if (!line.trim()) continue;
-      const [code, price] = line.split(',').map(s=>s.trim());
-      if (!code || !price || code.toLowerCase()==='barcode') continue;
-      priceMap.set(code, price);
+    function onScanFailure(error) {
+      // ignore errors to keep scanning
     }
-  }
 
-  function lookup(code) {
-    if (priceMap.has(code)) return priceMap.get(code);
-    const stripped = code.replace(/^0+/, '');
-    for (const [k,v] of priceMap) {
-      if (k.replace(/^0+/, '') === stripped) return v;
-    }
-    return null;
-  }
-
-  function onFound(code) {
-    if (!code || lastScanned === code) return;
-    lastScanned = code;
-    setTimeout(()=> lastScanned=null, 1500);
-
-    const p = lookup(code);
-    if (p) {
-      show(`💰 Price for <span class="price">${code}</span>: ₹${p}`, 'ok');
-      beep.play().catch(()=>{});
-    } else {
-      show(`❌ ${code} — Not found`, 'not');
-    }
-  }
-
-  checkManualBtn.addEventListener('click', ()=> {
-    onFound(manualInput.value.trim());
-  });
-
-  reloadBtn.addEventListener('click', ()=> {
-    loadCSV(CSV_URL);
-  });
-
-  // Start scanner
-  async function startScanner() {
-    const devices = await Html5Qrcode.getCameras();
-    if (!devices.length) {
-      show('No camera found', 'not');
-      return;
-    }
-    const scanner = new Html5Qrcode("reader");
-    scanner.start(
-      devices[0].id,
-      { fps: 10, qrbox: { width: 300, height: 100 } },
-      onFound,
-      ()=>{}
+    const html5QrCode = new Html5Qrcode("reader");
+    html5QrCode.start(
+      { facingMode: "environment" }, // back camera
+      { fps: 10, qrbox: 250 },
+      onScanSuccess,
+      onScanFailure
     );
-  }
-
-  await loadCSV(CSV_URL);
-  await startScanner();
-
-})();
-</script>
-
+  </script>
 </body>
 </html>
